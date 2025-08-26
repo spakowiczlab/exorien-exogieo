@@ -56,7 +56,7 @@ for(i in immcells){
     select(-mlab)
 }
 
-write_xlsx(micim.list, "../tables/s6_correlation-summary.xlsx")
+write_xlsx(micim.list, "../tables/s8_correlation-summary.xlsx")
 ```
 
 # Immune cell abundances
@@ -90,8 +90,8 @@ loadTCGAimmune <- function(){
 orien.immune <- loadORIENImmune()
 TCGA.immune <- loadTCGAimmune()
 
-write.csv(orien.immune, "../tables/s_orien-immune-frac.csv", row.names = F)
-write.csv(TCGA.immune, "../tables/s_tcga-immune-frac.csv", row.names = F)
+write.csv(orien.immune, "../tables/s6_orien-immune-frac.csv", row.names = F)
+write.csv(TCGA.immune, "../tables/s7_tcga-immune-frac.csv", row.names = F)
 ```
 
 

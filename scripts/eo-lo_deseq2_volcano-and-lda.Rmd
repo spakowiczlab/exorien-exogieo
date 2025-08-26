@@ -1,0 +1,163 @@
+---
+title: "figure_3"
+author: "Rebecca Hoyd"
+date: "7/22/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(forcats)
+library(DESeq2)
+library(ggrepel)
+```
+
+# Load data
+
+```{r}
+
+exo.ra <- read.csv("/fs/ess/PAS1695/projects/exogieo/data/ORIEN-processing/2022-03-16_unnorm-mics_filt.csv", stringsAsFactors = F) 
+clindat <- read.csv("../data/clinical_TCGA_curated.csv", stringsAsFactors = F)
+
+taxalevels <- c("domain", "kingdom", "phylum", "class", "order", "family", "genus")
+
+```
+
+# Functions
+
+```{r}
+exoRAtowidecounts <- function(data, taxlev){
+  tmp <- data
+  tmp$Taxa <- tmp[[taxlev]]
+  tmp.wide<- tmp %>%
+    rename("sample" = "sample.microbe") %>%
+    dplyr::filter(!is.na(Taxa)) %>%
+    group_by(sample.microbe, Taxa) %>%
+    summarise(ra = sum(counts, na.rm = T)) %>%
+    spread(key = "Taxa", value = "ra")
+  
+  tmp.wide[is.na(tmp.wide)] <- 0
+  return(tmp.wide)
+}
+
+DESeq.lev <- function(ecounts, clin, taxlev){
+  ddscounts <- ecounts %>%
+    column_to_rownames(var = "sample.microbe") %>%
+    t() %>%
+    as.data.frame() %>%
+    dplyr::select(clin$sample.microbe) %>%
+    as.matrix()
+  
+  badgen <- names(subset(rowSums(ddscounts), rowSums(ddscounts) == 0))
+  ddscounts <- ddscounts[!(rownames(ddscounts) %in% badgen),]
+
+  
+  dds <- DESeqDataSetFromMatrix(countData = ddscounts, colData = clin, design = ~ agestat)
+  dds <- DESeq(dds)
+  
+  dds.res <- results(dds, name = "agestat_LO_vs_EO") %>%
+    as.data.frame() %>%
+    rownames_to_column(var = "Taxa") %>%
+    mutate(Taxa.Level = taxlev)
+  
+  return(dds.res)
+}
+```
+
+# DESeq2
+
+```{r}
+exo.counts <- lapply(taxalevels, function(x) exoRAtowidecounts(exo.ra, x))
+names(exo.counts) <- taxalevels
+
+clindat.binage <- clindat %>% 
+  dplyr::select(sample.microbe, sample.expression, agestat) 
+```
+
+```{r}
+res.list <- lapply(taxalevels, function(x) try(DESeq.lev(exo.counts[[x]], clindat.binage, x)))
+
+res.df <- bind_rows(res.list) %>%
+  mutate(padj = p.adjust(pvalue, method = "fdr"))
+
+res.df %>%
+  mutate(y.axis = -log(padj)) %>%
+  arrange(desc(y.axis)) %>%
+  dplyr::select(Taxa, log2FoldChange, y.axis, everything()) %>%
+  write.csv("../data/deseq2_all-cohort.csv", row.names = F)
+```
+
+Save intermediate object for quick figure adjustments.
+```{r}
+res.df <- read.csv("../data/deseq2_all-cohort.csv")
+```
+
+
+## Panel A: Volcano plot
+```{r}
+plot.input <- 
+  res.df %>%
+  mutate(colgroup = ifelse(padj < 0.05, Taxa.Level, NA)) %>%
+  # drop_na(colgroup) %>%
+  mutate(collevel = fct_relevel(colgroup, c("kingdom", "phylum", "class", "order", "family", "genus")))
+  
+
+volplot <- 
+  plot.input %>%
+  ggplot(aes(x = log2FoldChange, y = -log(padj), color = collevel)) +
+  geom_point(alpha = .8) +
+  # geom_text_repel(aes(label = ifelse(!is.na(colgroup), Taxa, NA))) +
+  geom_hline(yintercept = -log(.05), linetype = "dashed") +
+  geom_vline(xintercept = -.25, linetype = "dashed") +
+  geom_vline(xintercept = .25, linetype = "dashed") +
+  scale_color_brewer(palette = "Dark2", 
+                     na.value = "grey50", 
+                     name = "Taxonomy",
+                     direction = -1) +
+  theme_bw()
+
+volplot
+
+ggsave(volplot, file = "../figures/volcano_deseq2-allsamps.png",
+       height = 2.5, width = 3.5)
+```
+
+## Panel B options: LDA
+
+```{r alternate LDA type vis}
+res.lda <- 
+  plot.input %>%
+  arrange(padj) %>%
+  mutate(sigrank = row_number(),
+         taxname = gsub("^\\w__", "", Taxa))
+
+generate.lda.vis <- function(ntax){
+  tmp <- res.lda %>%
+    filter(sigrank <= ntax) %>%
+    arrange(log2FoldChange)
+tmp$tax.fact <- fct_relevel(tmp$taxname, tmp$taxname)
+
+plot <- ggplot(tmp, aes(x = tax.fact, y = log2FoldChange)) +
+  geom_col(aes(fill = collevel), show.legend = FALSE) +
+  theme_bw() +
+  coord_flip() +
+  labs(x = "") +
+  scale_fill_brewer(palette = "Dark2",
+                    na.value = "grey50",
+                    direction = -1)
+
+return(plot)
+  
+}
+
+lda.vis.list <- lapply(c(5,10), function(x) generate.lda.vis(x))
+names(lda.vis.list) <- c("5t", "10t")
+lapply(names(lda.vis.list), function (x) ggsave(plot = lda.vis.list[[x]], 
+                                                filename = paste0("../figures/LDA_deseq2_", x, ".png"),
+                                                device = "png", height = 2.5, width = 3.5))
+```

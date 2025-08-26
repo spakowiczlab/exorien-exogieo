@@ -1,0 +1,97 @@
+---
+title: "Supplementary tables"
+author: "Rebecca Hoyd"
+date: "11/22/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(writexl)
+```
+
+# S4
+
+```{r}
+load("../data/prepared-figure-data/vol-lda.rda")
+```
+
+
+```{r}
+s4 <- vol.lda.dat$volplot %>%
+  filter(dataset != "16S") %>%
+  select(Taxa, Taxa.Level, dataset, log2FoldChange, baseMean, lfcSE, stat, pvalue, padj)
+s4.datset <- unique(s4$dataset)
+s4.list <- list()
+for(i in s4.datset){
+  s4.list[[i]] <- s4 %>%
+    filter(dataset == i) %>%
+    select(-dataset)
+}
+
+write_xlsx(s4.list, "../tables/s4_fig3-rnaseq-vol.xlsx")
+```
+
+# S5
+
+```{r}
+s5 <- vol.lda.dat$volplot %>%
+  filter(dataset == "16S") %>%
+  select(term, microbe, estimate, std.error, statistic, p.value, padj, l2fc)
+write_xlsx(s5, "../tables/s5_fig-16s-vol.xlsx")
+```
+
+# S6
+
+```{r}
+load("../data/prepared-figure-data/scatterplot_corrs.rda")
+
+micim.list <- list()
+immcells <- unique(micim.full$im.cell)
+for(i in immcells){
+  micim.list[[i]] <- micim.full %>%
+    filter(im.cell == i) %>%
+    select(-mlab)
+}
+
+write_xlsx(micim.list, "../tables/s6_correlation-summary.xlsx")
+```
+
+# Immune cell abundances
+
+```{r}
+loadORIENImmune <- function(){
+  clindat <- read.csv("../data/clinical_ORIEN_curated.csv", stringsAsFactors = F)
+
+immunecells <- read.csv("/fs/ess/PAS1695/projects/exorien/data/cibersort/2022-03-16_immunecell_composition.csv", stringsAsFactors = F) 
+
+imm.cond <- immunecells %>%
+  filter(sample %in% clindat$RNASeq) %>%
+  select(-X, -P.value, -Correlation, -RMSE)
+
+return(imm.cond)
+}
+
+loadTCGAimmune <- function(){
+  clindat <- read.csv("../data/clinical_TCGA_curated.csv")
+  
+  immunecells <- read.csv("/fs/ess/PAS1695/projects/exogieo/data/drake-output/2021-02-15_tcga_immune-cell-fractions.csv", stringsAsFactors = F) %>%
+    dplyr::select(sample.expression, everything()) %>%
+    filter(sample.expression %in% clindat$sample.expression)
+  
+  return(immunecells)
+}
+
+```
+
+```{r}
+orien.immune <- loadORIENImmune()
+TCGA.immune <- loadTCGAimmune()
+
+write.csv(orien.immune, "../tables/s_orien-immune-frac.csv", row.names = F)
+write.csv(TCGA.immune, "../tables/s_tcga-immune-frac.csv", row.names = F)
+```
+
+

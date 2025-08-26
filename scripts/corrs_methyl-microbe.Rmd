@@ -1,0 +1,108 @@
+---
+title: "figure 4"
+author: "Rebecca Hoyd"
+date: "7/22/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(broom)
+library(stringr)
+```
+
+# Load data
+```{r}
+
+exo.ra <- read.csv("/fs/ess/PAS1695/projects/exogieo/data/ORIEN-processing/2022-03-16_RA-with-taxonomy.csv", stringsAsFactors = F) 
+
+full.master.key <- 
+  read.table("../data/key_all-sample-ids-with-pnt-barcodes-msi_pole_pold_status_358.txt",
+             stringsAsFactors = F, sep = "\t", header = T)
+
+methyl.vals <- read.csv("/fs/ess/PAS1695/projects/exogieo/data/coad_read_methylation_assay_combatcorrected_betavalues_358samples.csv", stringsAsFactors = F)
+```
+
+# Format
+
+```{r prepare microbes}
+carfol.gen <- c("g__Lactobacillus", "g__Bifidobacterium", "g__Clostridium", "g__Escherichia",
+                "g__Prevotella", "g__Akkermansia")
+
+exo.bacillus <- exo.ra %>%
+  filter(microbe != "Homo.sapiens") %>%
+  group_by(sample) %>%
+  mutate(tot.ra = sum(exo.ra)) %>%
+  ungroup() %>%
+  mutate(exo.ra = exo.ra/tot.ra) %>%
+  filter(genus %in% carfol.gen) %>%
+  group_by(sample, genus) %>%
+  summarise(ra = sum(exo.ra)) %>%
+  spread(key = "genus", value = "ra")
+```
+
+```{r prepare methylation}
+# Format for sample matching
+methyl.means <- methyl.vals %>%
+  gather(-X, key = "patient_barcode", value = "methyl") %>%
+  group_by(patient_barcode) %>%
+  summarise(mean.methyl = mean(methyl)) %>%
+  mutate(patient_barcode = str_sub(gsub("\\.", "-", patient_barcode), 1, 12))
+methyl.mat <- methyl.vals %>%
+  column_to_rownames(var = "X") %>%
+  as.matrix()
+
+# Limit to most variable methylation sites
+methyl.vars <- apply(methyl.mat, 1, "var")
+region.choose <- methyl.vars > quantile(methyl.vars, .9)
+methyl.filt <- methyl.mat[region.choose,] %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column("patient_barcode") %>%
+  mutate(patient_barcode = str_sub(gsub("\\.", "-", patient_barcode), 1, 12))
+```  
+
+```{r combine objects for correlation}
+combined.methyl.lacto <- full.master.key %>%
+  mutate(sample = sample.microbe) %>%
+  inner_join(exo.bacillus) %>%
+  left_join(methyl.means) %>%
+  left_join(methyl.filt)
+
+region.names <- names(subset(region.choose, region.choose == T))
+```
+
+# Run correlations
+```{r}
+lacto.many.corr <- lapply(carfol.gen, function(g) 
+  lapply(region.names, function(x) cor.test(
+    combined.methyl.lacto[,g],
+    combined.methyl.lacto[,x],
+    method = "spearman") %>%
+      tidy() %>%
+      mutate(genus = g,
+             region = x)))
+
+lacto.many.df <- bind_rows(lapply(lacto.many.corr, function(x) bind_rows(x)))
+```
+
+# Plot
+```{r}
+# write.csv(lacto.many.df, "../data/correlations_microbes-with-methylation.csv")
+
+corr.hist <- lacto.many.df %>%
+  mutate(genus = gsub("g__", "", genus)) %>%
+  ggplot(aes(x = estimate)) +
+  geom_histogram() +
+  geom_vline(xintercept = 0, lty = 2) +
+  facet_wrap(vars(genus)) + 
+  theme_bw() +
+  labs(x = "Spearman rho", y= "")
+
+ggsave(corr.hist, file = "../figures/histogram_genera-methyl-corr.pdf")
+```

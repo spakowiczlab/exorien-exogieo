@@ -1,0 +1,170 @@
+---
+title: "EO v LO 16S"
+author: "Rebecca Hoyd"
+date: "3/24/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(glmm)
+library(broom)
+library(readxl)
+library(rlist)
+library(stringr)
+library(ggrepel)
+```
+
+# Load data
+
+```{r}
+exo.ra <- read.csv("../../../data/16s_taxa_allLevels_counts_wide.csv", stringsAsFactors = F)
+
+```
+
+```{r}
+subset_matched_clin <- function(){
+  tmp1 <- read_excel("/fs/ess/PAS1695/projects/exogieo/221202_Spakowicz_GSL-PY-2916/Copy of DeIDd_Jin_GI_GreaterThan50_Frozen_Shipment1_ClinicalData_09.2020-updated in 2022.xlsx") %>%
+    # select(`TCC ID`, `RNASeq-T SL ID`, `Specimen Type`) %>%
+    rename("link" =  `TCC ID`,
+           "sample" = `RNASeq-T SL ID`) %>%
+    mutate(EO.stat = "lo")
+  tmp2 <- read_excel("/fs/ess/PAS1695/projects/exogieo/221202_Spakowicz_GSL-PY-2916/Copy of DeIDd_Jin_GI_lessThan50_Frozen_Shipment1_ClinicalData_09.2020_lcm.xlsx") %>%
+    # select(`TCC ID`, `RNASeq-T SL ID`, `Specimen Type`) %>%
+    rename("link" =  `TCC ID`,
+           "sample" = `RNASeq-T SL ID`) %>%
+    mutate(EO.stat = "eo")
+  tmp3 <- read_excel("/fs/ess/PAS1695/projects/exogieo/221202_Spakowicz_GSL-PY-2916/Spackowicz Sample DNA.xls") %>%
+    # select(Sample, `Subject ID 1`) %>%
+    rename("sample16s" = Sample,
+           "link" = `Subject ID 1`) %>%
+    drop_na(link) 
+  
+  meta <- bind_rows(tmp1,tmp2) %>%
+    inner_join(tmp3) %>%
+    select(sample16s, link, `Tumor/Normal`, EO.stat) %>%
+    filter(duplicated(sample16s)) %>%
+    filter(`Tumor/Normal` == "Tumor") %>%
+    mutate(id = as.numeric(gsub(".*-0", "", sample16s)))
+  
+  return(meta)
+}
+
+meta <- subset_matched_clin()
+```
+
+# Format
+```{r}
+exoRAtowide <- function(data, taxlev){
+  tmp <- data
+  tmp$Taxa <- tmp[[taxlev]]
+  tmp.wide<- tmp %>%
+    dplyr::filter(!is.na(Taxa)) %>%
+    group_by(sample, Taxa) %>%
+    summarise(ra = sum(counts, na.rm = T)) %>%
+    pivot_wider(names_from = "Taxa", values_from = "ra")
+  
+  tmp.wide[is.na(tmp.wide)] <- 0
+  return(tmp.wide)
+}
+
+exoToDF <- function(taxalevels = c("domain", "kingdom", "phylum", "class", 
+                                    "order", "family", "genus", "species"), 
+                     data){
+  w.ls <- lapply(taxalevels, function(x) exoRAtowide(data, x))
+  w.df <- reduce(w.ls, function(x,y) left_join(x,y)) 
+  return(w.df)
+}
+```
+
+```{r}
+# We need to convert the counts to relative abundances to account for using 16s, where absolute abundance is in question. However, Gamma distribution requires positive integers, so we multiply by a factor that will get all the values above 1.
+exo.ra2 <- exo.ra %>%
+  mutate(totcounts = sum(counts), .by = sample) %>%
+  mutate(counts = (counts/totcounts) * 1e5) %>%
+  select(-totcounts)
+
+exo.w <- exoToDF(data = exo.ra2)
+mics <- colnames(exo.w)[-1]
+
+```
+
+```{r, eval = F}
+meta2 <- meta %>%
+  mutate(match = id %in% exo.w$sample)
+
+test <- exo.w %>%
+  select(sample) %>%
+  mutate(match = sample %in% meta$id)
+```
+
+```{r}
+exo.pos <- lapply(mics, function(x) exo.w[,x]+ 1) %>%
+  bind_cols()
+exo.pos$sample <- exo.w$sample
+
+modin <- meta %>%
+  mutate(sample = id) %>%
+  inner_join(exo.pos) %>%
+  mutate(eo.stat = ifelse(EO.stat == "eo",1,0))
+
+```
+
+# Models
+
+```{r}
+capture.models.univ <- function(outcome, lfun){
+  mods.list <- lapply(mics, function(x) 
+    try({glm(as.formula(paste0("`", x, "` ~ ", outcome)), 
+             family = lfun, data = modin) %>%
+        tidy() %>%
+        mutate(microbe = x)})
+  )
+  
+  mods.list.clean <- list.clean(mods.list, function(x) is.null(x))
+  mods.df <- bind_rows(mods.list.clean)
+  return(mods.df)
+}
+```
+
+```{r}
+mod.res <- capture.models.univ("eo.stat", "Gamma")
+
+mod.res.form <- mod.res %>%
+  filter(term != "(Intercept)") %>%
+  arrange(p.value) %>%
+  mutate(padj = p.adjust(p.value, method = "fdr"))
+
+write.csv(mod.res.form, "../data/16s_modelling_eo-lo.csv", row.names = F)
+```
+
+# Visualized results
+
+```{r checking age range}
+ggplot(key.age, aes(x = as.numeric(AgeAtDiagnosis))) +
+  geom_histogram(bins = 15)
+ggsave("../figures/histogram_16s_age-range.png")
+```
+
+```{r volcano plot of models}
+# mod.res.form <- read.csv("../data/16s_modelling_eo-lo.csv")
+
+mod.res.form %>%
+  filter(microbe != "k__unclassified-p__Actinobacteria") %>%
+  mutate(taxlev = ifelse(p.value < 0.05, str_sub(microbe,1,1), NA),
+         miclab = ifelse(!is.na(taxlev), gsub(".*__", "", microbe), NA)) %>%
+  ggplot(aes(x = -estimate, y = -log(p.value), color = taxlev, label = miclab)) +
+  geom_point() +
+  geom_text_repel(show.legend = F) +
+  geom_hline(yintercept = -log(0.05), lty = 2) +
+  labs(x = "Estimate") +
+  scale_color_brewer(palette = "Spectral",na.value = "grey50",
+                     name = "Taxonomic level",
+                     breaks = c("p", "c", "g", "s"),
+                     labels = c("Phylum", "Class", "Genus", "Species")) +
+  theme_bw()
+ggsave("../figures/volcano_16s_eo-lo.png")
+```
+

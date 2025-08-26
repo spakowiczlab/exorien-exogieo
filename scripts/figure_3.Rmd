@@ -1,0 +1,207 @@
+---
+title: "Figure 4"
+author: "Rebecca Hoyd"
+date: "10/17/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(eulerr)
+```
+
+# Overlapping microbes venn diagram
+
+```{r}
+load("../data/prepared-figure-data/euler_taxalist.rda")
+euler.coords <- euler(combinations = euler.list, shape = "ellipse")
+```
+
+```{r}
+pdf("../figures/euler_dataset-taxa-overlap.pdf")
+plot(euler.coords)
+dev.off()
+```
+
+# 16s distance plot
+
+```{r}
+load("../data/prepared-figure-data/distances_16s.rda")
+
+dist.16s %>%
+  mutate(paired.char = if_else(is.na(specimen.type),
+                          true = "Control",
+                          false = specimen.type)) %>%
+  ggplot(aes(x=paired, y=distance, fill = paired.char)) +
+  geom_violin(draw_quantiles = c(.25,.5,.75), alpha = .4) +
+  geom_point(position = position_jitterdodge(jitter.width = .25),
+             aes(color = paired.char), alpha = .7, show.legend = F)+
+  theme_bw(base_size = 9) +
+  scale_fill_viridis_d(option = "A", aesthetics = c("color", "fill")) +
+  labs(x = "Distance between",
+       y = "Bray-Curtis distance from 16S to RNAseq",
+       fill = "Tissue Source") +
+  scale_x_discrete(breaks = c("TRUE", "FALSE", "CONTROL"),
+                   labels = c("Paired\nsamples", "Unpaired\nsamples", "Control")) +
+  coord_flip() +
+  theme(legend.position = "top") 
+
+ggsave("../figures/16s_distance_boxplot.png", height=2.5, width=3.5)
+```
+
+## KW tests for differences between groups
+
+```{r}
+test.tum <- 
+  dist.16s %>%
+  filter(specimen.type == "Tumor")
+table(test.tum$paired)
+
+kw.tum.paired <- kruskal.test(distance ~ paired, data = test.tum)
+kw.tum.paired
+```
+
+The 16S samples are significantly more similar to RNAseq samples from the same patient than to different patients (Kruskal-Wallis rank sum test p-value = `r kw.tum.paired$p.value`).
+
+```{r}
+test.paired <- 
+  dist.16s %>%
+  filter(paired == "TRUE")
+table(test.paired$specimen.type)
+
+kw.spectype <- kruskal.test(distance ~ specimen.type, data = test.paired)
+kw.spectype
+```
+
+The RNAseq-derived microbes are not significantly different from 16S-derived microbes from tumors or adjacent normal tissue (Kruskal-Wallis rank sum test p-value = `r kw.spectype$p.value`).
+
+```{r}
+test.norm <- 
+  dist.16s %>%
+  filter(specimen.type == "Normal") 
+table(test.norm$paired)
+
+test.norm %>%
+  ggplot(aes(x = paired, y = distance)) +
+  geom_boxplot()
+
+kw.test.norm <- kruskal.test(distance ~ paired, data = test.norm)
+kw.test.norm
+```
+
+In the normal samples, the paired samples are more similar to each other than the unpaired samples (p = `r kw.test.norm$p.value`)
+
+```{r}
+test.cont.normpair <- 
+  dist.16s %>%
+  filter(paired == "CONTROL" |(paired == "TRUE" & specimen.type == "Normal")) 
+# table(test.tum$paired)
+
+kruskal.test(distance ~ paired, data = test.cont.normpair)
+```
+
+The paired normal samples are significantly different than controls (p-value = 0.0007169).
+
+```{r}
+test.cont.normunpair <- 
+  dist.16s %>%
+  filter(paired == "CONTROL" |(paired == "FALSE" & specimen.type == "Normal"))
+
+kruskal.test(distance ~ paired, data = test.cont.normunpair)
+```
+
+The unpaired normal samples are significantly different than controls (p-value = 0.0001215).
+
+```{r}
+test.cont.tumpair <- 
+  dist.16s %>%
+  filter(paired == "CONTROL" |(paired == "TRUE" & specimen.type == "Tumor"))
+
+kruskal.test(distance ~ paired, data = test.cont.tumpair)
+```
+
+The paired tumor samples are significantly different than controls (p-value = 0.0005125).
+
+
+```{r}
+test.cont.tumunpair <- 
+  dist.16s %>%
+  filter(paired == "CONTROL" |(paired == "FALSE" & specimen.type == "Tumor"))
+
+kruskal.test(distance ~ paired, data = test.cont.tumunpair)
+```
+
+The unpaired tumor samples are significantly different than controls (p-value = 2.65e-08).
+
+
+# 16s validation stacked bar
+
+```{r}
+load("../data/prepared-figure-data/stackedbar_16s.rda")
+stackedbar.16s %>%
+  ggplot(aes(x = sample,
+             y = rel.abun,
+             fill = Phylum)) +
+  geom_bar(position="fill", stat = "identity") +
+    labs(x = "", y = "") +
+  scale_fill_manual(values = c("darkorange4", "darkseagreen", "red3","darkslateblue", "salmon2", "cornflowerblue", "cyan4","deeppink4", "darkgoldenrod2"), name = "Taxa") +
+  theme_minimal(base_size = 18) +
+  theme(axis.text.x = element_blank(), 
+          axis.ticks.x = element_blank(),
+          axis.text.y = element_blank(),
+          panel.grid.major = element_blank()) +
+    # facet_row(vars(sample_type), scales = "free_x", space = "free") 
+  facet_grid(. ~ samptype, scales = "free_x", space = "free")
+
+ggsave(file = "../figures/16sValidation_stackedBar.png", dev = "png", width = 10, height = 4)
+
+```
+
+# Volcano plots 
+
+```{r}
+load("../data/prepared-figure-data/vol-lda.rda")
+vol.lda.dat$volplot %>%
+  mutate(dataset = fct_relevel(dataset, c("TCGA", "ORIEN", "16S"))) %>%
+  ggplot(aes(x = log2FoldChange, y = -log(padj), color = collevel)) +
+  facet_wrap(~dataset) +
+  geom_point(alpha = .8) +
+  # geom_text_repel(aes(label = ifelse(!is.na(colgroup), Taxa, NA))) +
+  geom_hline(yintercept = -log(.05), linetype = "dashed") +
+  geom_vline(xintercept = -.25, linetype = "dashed") +
+  geom_vline(xintercept = .25, linetype = "dashed") +
+  scale_color_brewer(palette = "Dark2", 
+                     na.value = "grey50", 
+                     name = "Taxonomy",
+                     direction = -1) +
+  theme_bw()
+
+ggsave(file = "../figures/volcano_facetted-datasets.png",
+       height = 2, width = 7)
+```
+# LDA plots
+
+```{r}
+load("../data/prepared-figure-data/vol-lda.rda")
+
+vol.lda.dat$LDA %>%
+  mutate(dataset = fct_relevel(dataset, c("TCGA", "ORIEN", "16S"))) %>%
+  ggplot(aes(x = tax.fact, y = log2FoldChange)) +
+  facet_wrap(vars(dataset), scales = "free_y") +
+  geom_col(aes(fill = collevel), show.legend = FALSE) +
+  theme_bw() +
+  coord_flip() +
+  labs(x = "") +
+  scale_fill_brewer(palette = "Dark2",
+                    na.value = "grey50",
+                    direction = -1)
+
+ggsave("../figures/LDA_facetted-datasets.png", 
+       width = 7.2, 
+       height = 2)
+ggsave("../figures/LDA_facetted-datasets.svg", 
+       width = 7.2, 
+       height = 2)
+```

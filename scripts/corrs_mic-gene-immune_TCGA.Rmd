@@ -1,0 +1,174 @@
+---
+title: "figures_correlations"
+author: "Rebecca Hoyd"
+date: "February 6, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(broom)
+library(forcats)
+library(ggforce)
+```
+
+
+# Load data
+
+```{r}
+exo.ra <- read.csv("/fs/ess/PAS1695/projects/exorien/data/drake-output/2022-03-16/2022-03-16_TCGA_unnormalized-microbes_humanRNAfilt_w_taxonomy.csv", stringsAsFactors = F) 
+
+expr.norm <- read.csv("/fs/ess/PAS1695/projects/exorien/data/drake-output/2022-03-16/2022-03-16_TCGA_expressions.csv", stringsAsFactors = F)
+
+clindat <- read.csv("../data/clinical_TCGA_curated.csv", stringsAsFactors = F)
+immunecells <- read.csv("/fs/ess/PAS1695/projects/exogieo/data/drake-output/2021-02-15_tcga_immune-cell-fractions.csv", stringsAsFactors = F) %>%
+  dplyr::select(sample.expression, everything())
+
+fix.cibersort.labs <- read.csv("/fs/ess/PAS1695/projects/exogieo/data/COAD-READ_convert-cibersort-ids-to-expression-uuids.csv",
+                               stringsAsFactors = F)
+
+```
+
+# Data formatting
+
+```{r}
+hs.counts <- exo.ra %>%
+  filter(microbe == "Homo.sapiens") %>%
+  select(sample, counts) %>%
+  rename("Hs.counts" = "counts")
+
+exo.m <- exo.ra %>%
+  left_join(hs.counts) %>%
+  filter(microbe != "Homo.sapiens") %>%
+  mutate(RA = counts/Hs.counts) %>%
+  select(sample, microbe, RA) %>%
+  pivot_wider(names_from = microbe, values_from = RA)
+```
+
+
+
+```{r}
+clindat.binage <- clindat %>%
+  dplyr::select(sample.microbe, sample.expression, agestat)
+
+oldlabs <- c("B.cells.naive", "B.cells.memory", 
+             "Plasma.cells", "T.cells.CD8", "T.cells.CD4.naive", 
+             "T.cells.CD4.memory.resting", "T.cells.CD4.memory.activated", "T.cells.follicular.helper",
+             "T.cells.gamma.delta", "T.cells.regulatory..Tregs.", "NK.cells.resting", 
+             "NK.cells.activated", "Monocytes", "Macrophages.M0", 
+             "Macrophages.M1", "Macrophages.M2", "Dendritic.cells.resting", 
+             "Dendritic.cells.activated", "Mast.cells.resting", "Mast.cells.activated", 
+             "Eosinophils", "Neutrophils", "TILs")
+
+newlabs <- c("Naive B Cells", "Memory B Cells", 
+             "Plasma Cells", "CD8 T Cells", "Naive CD4 T Cells", 
+             "Resting Memory CD4 T Cells", "Activated Memory CD4 T Cells", "Follicular Helper T Cells",
+             "Gamma Delta T Cells", "Regulatory T Cells", "Resting NK Cells", 
+             "Activated NK Cells", "Monocytes", "M0 Macrophages",
+             "M1 Macrophages", "M2 Macrophages", "Resting Dendritic Cells", 
+             "Activated Dendritic Cells", "Resting Mast Cells", "Activated Mast Cells", 
+             "Eosonophils", "Neutrophils", "TILs")
+
+lab.df <- as.data.frame(cbind(im.cell = oldlabs, newlabs))
+
+```
+
+# Prepare data inputs
+
+```{r}
+microbes <- colnames(exo.m)[-1]
+imcells <- colnames(immunecells)[-1]
+
+nlrs <- expr.norm$Gene.Symbol[grep("^nlr", expr.norm$Gene.Symbol, ignore.case = T)]
+tlrs <- expr.norm$Gene.Symbol[grep("^tlr", expr.norm$Gene.Symbol, ignore.case = T)]
+gnames <- c(nlrs, tlrs, "DDX58", "CGAS", "AIM2")
+
+corr.vars <- list(imcells, gnames)
+```
+
+```{r}
+expr.form <- expr.norm %>%
+  column_to_rownames(var = "Gene.Symbol") %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "sample") %>%
+  mutate(sample = gsub("^X", "", gsub("\\.", "-", sample))) %>%
+  select(c("sample", gnames))
+```
+
+```{r}
+micimexp.all <- clindat.binage %>%
+  left_join(immunecells) %>%
+  mutate(sample = sample.microbe) %>%
+  left_join(exo.m) %>%
+  mutate(sample = sample.expression) %>%
+  left_join(expr.form)
+
+save(micimexp.all, microbes, corr.vars,
+     file = "/fs/ess/PAS1695/projects/exogieo/data/correlation-data/TCGA-inputs.rda")
+```
+
+# Plots
+
+```{r}
+cor.can <- read.csv("/fs/ess/PAS1695/projects/exogieo/data/correlation-data/TCGA-results_1.csv") %>%
+  rename("im.cell" = "V2")
+
+cor.can %>%
+  left_join(lab.df) %>%
+  mutate(estimate.sig = ifelse(p.value < 0.05, estimate, -2)) %>%
+  ggplot(aes(x = microbe, y = im.cell, fill = estimate.sig)) +
+  facet_wrap(vars(onset), nrow = 1) +
+  geom_tile(show.legend = T) +
+  scale_fill_distiller(guide = "legend", breaks = seq(-1,1,.1), 
+                       limits = c(-1, 1),
+                       values = seq(0,1,.05),
+                       type = "div", palette = "RdBu", direction = -1,
+                       name = "Correlation",
+                       na.value = "white") +
+  labs(x = "", y = "") +
+  scale_x_discrete(position = "top") +
+  scale_y_discrete(breaks = oldlabs, labels = newlabs) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+        axis.text.y = element_text(size = 15)) 
+ggsave("../figures/correlation-heatmap_microbes-with-TILs_TCGA.png", width = 10) 
+```
+
+## Microbes with normalized expressions - Inflammasome
+
+
+
+
+
+```{r}
+cor.me <- read.csv("/fs/ess/PAS1695/projects/exogieo/data/correlation-data/TCGA-results_2.csv") %>%
+  rename("gene" = "V2")
+cor.me %>%
+  mutate(estimate.sig = ifelse(p.value < 0.05, estimate, -2)) %>%
+  ggplot(aes(x = microbe, y = gene, fill = estimate.sig)) +
+  facet_wrap(vars(onset), nrow = 1) +
+  geom_tile(show.legend = T) +
+  scale_fill_distiller(guide = "legend", breaks = seq(-1,1,.1), 
+                       limits = c(-1, 1),
+                       values = seq(0,1,.05),
+                       type = "div", palette = "RdBu", direction = -1,
+                       name = "Correlation",
+                       na.value = "white") +
+  labs(x = "", y = "") +
+  scale_x_discrete(position = "top") +
+  theme_bw() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+        axis.text.y = element_text(size = 12)) 
+ggsave("../figures/correlation-heatmap_microbe-expression_TCGA.png", width = 10) 
+```
+
+
+
+
+

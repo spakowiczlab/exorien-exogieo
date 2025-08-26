@@ -1,0 +1,81 @@
+---
+title: "Figure 1. Microbe Summary"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+library(RColorBrewer)
+library(forcats)
+library(ggforce)
+```
+
+# Load data
+```{r}
+exo.ra <- read.csv("/fs/ess/PAS1695/projects/exogieo/data/ORIEN-processing/2022-03-16_unnorm-mics_filt.csv", stringsAsFactors = F) 
+clindat <- read.csv("../data/clinical_TCGA_curated.csv", stringsAsFactors = F)
+```
+
+# A. Stacked bar of EO and LO at Kingdom level
+## Format data
+
+```{r choose most abundant phyla for display}
+exo.noh <-exo.ra %>%
+  filter(microbe != "Homo.sapiens") 
+
+exora.dom <- 
+  exo.noh %>%
+  dplyr::rename("sample.microbe" = "sample") %>%
+  mutate(domain = ifelse(order == "o__Caudovirales", 
+                         order, domain),
+         domain = ifelse(domain == "d__Viruses", 
+                         "d__Other Viruses", domain),
+         # domain = ifelse(
+         #   kingdom == "k__Viridiplantae" | kingdom == "k__Fungi",
+         #   kingdom, domain),
+         # domain = ifelse(is.na(domain), "d__Other", domain),
+         domain = ifelse(domain == "s__Plasmid pWW100",
+                         "d__Other", domain)
+         ) %>%
+  summarise(counts = sum(counts, na.rm = T), .by = c(sample.microbe, domain)) %>%
+  mutate(scounts = sum(counts), .by=sample.microbe) %>%
+  mutate(ra = counts/scounts) %>%
+  left_join(clindat)
+
+getord <- exora.dom %>%
+  filter(domain == "d__Bacteria") %>%
+  arrange(ra)
+getord <- getord$sample.microbe
+```
+
+Save intermediate objects to facilitate quick figure edits.
+```{r}
+# save(exora.dom, getord, file = "../data/stackedbar-inputs.RData")
+# load("../data/stackedbar-inputs.RData")
+```
+
+
+```{r}
+exora.dom %>%
+  filter(!is.na(agestat)) %>%
+  mutate(domain = gsub("^\\w__", "", domain)) %>%
+  ggplot(aes(x = fct_relevel(sample.microbe, getord),
+             y = ra, 
+             fill = domain
+         ))+
+  facet_row(vars(agestat), scales = "free_x", space = "free") +
+  geom_bar(position="fill", stat = "identity") +
+  labs(x = "", y = "") +
+  scale_fill_brewer(palette = "Set1", name = "") +
+  theme_bw() +
+  theme(axis.text.x = element_blank(), 
+        axis.ticks.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        panel.grid.major = element_blank()) 
+ggsave("../figures/stacked-bar_microbes_domain.png", height = 3, width = 7)
+```
+

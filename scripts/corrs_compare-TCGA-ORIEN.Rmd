@@ -1,0 +1,161 @@
+---
+title: "corrs_compare-TCGA-ORIEN"
+author: "Rebecca Hoyd"
+date: "7/15/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(ggrepel)
+```
+
+# Load data
+
+```{r}
+micim.TCGA <- read.csv("/fs/ess/PAS1695/projects/exogieo/data/correlation-data/TCGA-results_1.csv") %>%
+  rename("im.cell" = "V2",
+         "TCGA.est" = "estimate",
+         "TCGA.p" = "p.value") %>%
+  select(microbe, im.cell, onset, TCGA.est, TCGA.p) 
+  # mutate(datset = "TCGA")
+
+micim.ORIEN <- read.csv("/fs/ess/PAS1695/projects/exogieo/data/correlation-data/ORIEN-results_1.csv") %>%
+  rename("im.cell" = "V2",
+         "ORIEN.est" = "estimate",
+         "ORIEN.p" = "p.value") %>%
+  select(microbe, im.cell, onset, ORIEN.est, ORIEN.p)
+  # mutate(datset = "ORIEN")
+```
+
+```{r}
+micgen.TCGA <- read.csv("/fs/ess/PAS1695/projects/exogieo/data/correlation-data/TCGA-results_2.csv") %>%
+  rename("gene" = "V2",
+         "TCGA.est" = "estimate",
+         "TCGA.p" = "p.value") %>%
+  select(microbe, gene, onset, TCGA.est, TCGA.p) 
+  # mutate(datset = "TCGA")
+
+micgen.ORIEN <- read.csv("/fs/ess/PAS1695/projects/exogieo/data/correlation-data/ORIEN-results_2.csv") %>%
+  rename("gene" = "V2",
+         "ORIEN.est" = "estimate",
+         "ORIEN.p" = "p.value") %>%
+  select(microbe, gene, onset, ORIEN.est, ORIEN.p)
+  # mutate(datset = "ORIEN")
+```
+
+
+# Quick scatterplots
+
+## Formatting
+
+```{r}
+oldlabs <- c("B.cells.naive", "B.cells.memory", 
+             "Plasma.cells", "T.cells.CD8", "T.cells.CD4.naive", 
+             "T.cells.CD4.memory.resting", "T.cells.CD4.memory.activated", "T.cells.follicular.helper",
+             "T.cells.gamma.delta", "T.cells.regulatory..Tregs.", "NK.cells.resting", 
+             "NK.cells.activated", "Monocytes", "Macrophages.M0", 
+             "Macrophages.M1", "Macrophages.M2", "Dendritic.cells.resting", 
+             "Dendritic.cells.activated", "Mast.cells.resting", "Mast.cells.activated", 
+             "Eosinophils", "Neutrophils", "TILs")
+
+newlabs <- c("Naive B Cells", "Memory B Cells", 
+             "Plasma Cells", "CD8 T Cells", "Naive CD4 T Cells", 
+             "Resting Memory CD4 T Cells", "Activated Memory CD4 T Cells", "Follicular Helper T Cells",
+             "Gamma Delta T Cells", "Regulatory T Cells", "Resting NK Cells", 
+             "Activated NK Cells", "Monocytes", "M0 Macrophages",
+             "M1 Macrophages", "M2 Macrophages", "Resting Dendritic Cells", 
+             "Activated Dendritic Cells", "Resting Mast Cells", "Activated Mast Cells", 
+             "Eosonophils", "Neutrophils", "TILs")
+
+lab.df <- as.data.frame(cbind(im.cell = oldlabs, newlabs))
+```
+
+```{r}
+micim.mics <- intersect(micim.ORIEN$microbe, micim.TCGA$microbe)
+
+micim.full <- inner_join(micim.ORIEN, micim.TCGA) %>%
+  # filter(microbe %in% micim.mics) %>%
+  left_join(lab.df) %>%
+  drop_na() %>%
+  mutate(sigcode = case_when(ORIEN.p < 0.05 & TCGA.p < 0.05 ~ "Both",
+                             ORIEN.p < 0.05 & TCGA.p >= 0.05 ~ "ORIEN",
+                             ORIEN.p >= 0.05 & TCGA.p < 0.05 ~ "TCGA",
+                             ORIEN.p >= 0.05 & TCGA.p >= 0.05 ~ "Neither"),
+         mlab = ifelse(sigcode == "Both", microbe, NA))
+```
+
+```{r}
+micgen.full <- inner_join(micgen.ORIEN, micgen.TCGA) %>%
+  drop_na() %>%
+  mutate(sigcode = case_when(ORIEN.p < 0.05 & TCGA.p < 0.05 ~ "Both",
+                             ORIEN.p < 0.05 & TCGA.p >= 0.05 ~ "ORIEN",
+                             ORIEN.p >= 0.05 & TCGA.p < 0.05 ~ "TCGA",
+                             ORIEN.p >= 0.05 & TCGA.p >= 0.05 ~ "Neither"),
+         mlab = ifelse(sigcode == "Both", microbe, NA))
+```
+
+## All scatterplots
+
+```{r}
+quickScatter <- function(imlab){
+  
+  quickscatter <- micim.full %>%
+    filter(newlabs == imlab) %>%
+    ggplot(aes(x = ORIEN.est, y = TCGA.est, color = sigcode, label = mlab)) +
+    facet_wrap(vars(onset)) +
+    geom_point() +
+    geom_text_repel() +
+    geom_hline(yintercept = 0) +
+    geom_vline(xintercept = 0) +
+    scale_color_manual(values = c("darkgreen", "black", "orange", "blue"),
+                       name = "Significant in") +
+    labs(x = "ORIEN correlation", y = "TCGA correlation", title = imlab) +
+    theme_bw()
+  
+  ggsave(plot = quickscatter, filename = paste0("../figures/scatterplots_mic-immune/", imlab, ".png"), height = 10, width = 20)
+}
+  
+```
+
+```{r}
+quickScatterGene <- function(imlab){
+  
+  quickscatter <- micgen.full %>%
+    filter(gene == imlab) %>%
+    ggplot(aes(x = ORIEN.est, y = TCGA.est, color = sigcode, label = mlab)) +
+    facet_wrap(vars(onset)) +
+    geom_point() +
+    geom_text_repel() +
+    geom_hline(yintercept = 0) +
+    geom_vline(xintercept = 0) +
+    scale_color_manual(values = c("darkgreen", "black", "orange", "blue"),
+                       name = "Significant in") +
+    labs(x = "ORIEN correlation", y = "TCGA correlation", title = imlab) +
+    theme_bw()
+  
+  ggsave(plot = quickscatter, filename = paste0("../figures/scatterplots_mic-gene/", imlab, ".png"), height = 10, width = 20)
+}
+  
+```
+
+```{r}
+# lapply(c("EO", "LO"), function(x)
+  lapply(newlabs[1:22], function(y)
+    quickScatter(y)
+    )
+  # )
+
+# lapply(c("EO", "LO"), function(x)
+  lapply(unique(micgen.full$gene), function(y)
+    quickScatterGene(y)
+    )
+  # )
+```
+
+# Desired scatterplots
+
+# Heatmaps
+

@@ -1,0 +1,268 @@
+---
+title: "16s boxplot"
+author: "Caroline Wheeler, updated by Rebecca Hoyd"
+date: "3/2/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(vegan)
+```
+
+# Load data
+
+```{r}
+samp_match <- read.csv("../data/16s_sample_matching.csv")
+krakenmet = read.delim("/fs/ess/PAS1695/exoticpipe/external-data/kraken2-metaphlan-noplants.txt",
+                         header = F, stringsAsFactors = F) %>%
+    dplyr::rename("Taxonomy" = "V1")
+exogieo <- read.csv("../data/16s_counts_long.csv") %>%
+  dplyr::rename("microbe" = name,
+         "counts" = new_est_reads)
+# # read in 16s counts wide
+# exogieo <- read.csv("../data/16s_taxa_allLevels_counts_wide.csv") %>%
+#   # filter out human reads
+#   filter(microbe != "Homo.sapiens")
+exotic <- readRDS("/fs/ess/PAS1695/projects/exotic/data/drake-output/2022-03-08/tcc.counts.RDS")
+```
+
+# Functions
+
+```{r}
+get_levels <- function(exora){
+  exora <- exora %>%
+   dplyr::select(sample, microbe, Taxonomy, counts) %>%
+    mutate(domain = gsub("(d__\\w+).*", "\\1", Taxonomy),
+           kingdom = ifelse(grepl("k__", Taxonomy),gsub(".*(k__\\w+).*", "\\1", Taxonomy), NA),
+           phylum = ifelse(grepl("p__", Taxonomy),gsub(".*(p__\\w+).*", "\\1", Taxonomy), NA),
+           order = ifelse(grepl("o__", Taxonomy),gsub(".*(o__\\w+).*", "\\1", Taxonomy), NA),
+           class = ifelse(grepl("c__", Taxonomy),gsub(".*(c__\\w+).*", "\\1", Taxonomy), NA),
+           family = ifelse(grepl("f__", Taxonomy),gsub(".*(f__\\w+).*", "\\1", Taxonomy), NA),
+           genus = ifelse(grepl("g__", Taxonomy),gsub(".*(g__\\w+).*", "\\1", Taxonomy), NA),
+           species = gsub(".*(s__.*)", "\\1", Taxonomy)
+    ) %>%
+    mutate(genus = ifelse(is.na(genus), paste0("g__unclassified-", species), genus),
+           family = ifelse(is.na(family), paste0("f__unclassified-", gsub("g__unclassified-", "", genus)), family),
+           order = ifelse(is.na(order), paste0("o__unclassified-", gsub("f__unclassified-", "", family)), order),
+           class = ifelse(is.na(class), paste0("c__unclassified-", gsub("o__unclassified-", "", order)), class),
+           phylum = ifelse(is.na(phylum), paste0("p__unclassified-", gsub("c__unclassified-", "", class)),phylum),
+           kingdom = ifelse(is.na(kingdom), paste0("k__unclassified-", gsub("p__unclassified-", "", phylum)), kingdom),
+           domain = ifelse(is.na(domain), paste0("d__unclassified-", gsub("k__unclassified-", "", kingdom)), domain)) %>%
+    dplyr::select(sample, microbe, Taxonomy, domain, kingdom, phylum, class, order, family, genus, species, counts)
+  return(exora)
+}
+```
+
+
+# Format microbe counts to long prevalence with taxonomy
+
+```{r set up taxkey}
+taxkey <- krakenmet %>%
+  dplyr::filter(grepl("s__", Taxonomy)) %>%
+  mutate(microbe = gsub(".*s__(.*)", "\\1", Taxonomy),
+          microbe = make.names(microbe))
+```
+
+```{r get both to long format with taxonomy}
+exotic.all <- exotic %>%
+  pivot_longer(-sample, names_to = "microbe", values_to = "counts") %>%
+  left_join(taxkey) %>%
+  get_levels() %>%
+  filter(domain == "d__Bacteria") # Only include bacteria to better match 16s
+
+exogieo.all <- exogieo %>%
+  left_join(taxkey) %>%
+  get_levels()
+
+```
+```{r convert to prevalence}
+exogieo.prev <- exogieo.all %>%
+  select(sample, genus, counts) %>% 
+  group_by(sample, genus) %>% 
+  summarize(count = sum(counts)) %>%
+  mutate(prev = ifelse(count > 0, 1, 0)) %>%
+  select(-count)
+
+exotic.prev <- exotic.all %>%
+  select(sample, genus, counts) %>% 
+  group_by(sample, genus) %>% 
+  summarize(count = sum(counts)) %>%
+  mutate(prev = ifelse(count > 0, 1, 0)) %>%
+  select(-count)
+```
+
+
+filter exotic to SLids in paired data
+```{r combine datasets and format for distance}
+samp_match <- samp_match %>%
+  mutate(crop16s = substr(samp16s, 9, length(samp16s)))
+
+exotic.prev <- exotic.prev %>%
+  filter(sample %in% samp_match$RNAseq)
+
+exogieo.prev$sample <- as.character(exogieo.prev$sample)
+
+combined.prev <- rbind(exotic.prev, exogieo.prev) %>%
+  pivot_wider(names_from = genus, values_from = prev, values_fill = 0) %>%
+  column_to_rownames(var = "sample") %>%
+  as.matrix()
+```
+
+
+# Calculate and format distances
+
+```{r calculate distance}
+set.seed(19971030)
+dist <- vegdist(combined.prev, method = "bray")
+# binary = FALSE, upper = TRUE, na.rm = TRUE
+```
+
+
+```{r format as long df}
+dist.res <- as.matrix(dist) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "RNAseq") %>%
+  pivot_longer(-RNAseq, names_to = "samp16s", values_to = "distance") %>%
+  filter(RNAseq %in% samp_match$RNAseq,
+         samp16s %in% samp_match$crop16s)
+```
+
+prep pt id, paired, and specimen type cols
+```{r }
+pt.rna <- samp_match %>%
+  select(patient.id, RNAseq) %>%
+  dplyr::rename("pt.id.rna" = patient.id) %>%
+  filter(!is.na(RNAseq)) %>%
+  distinct()
+
+pt.16s <- samp_match %>%
+  select(patient.id, crop16s, specimen.type) %>%
+  dplyr::rename("pt.id.16s" = patient.id,
+         "samp16s" = crop16s)
+
+
+dist.res.lab <- dist.res %>%
+  left_join(pt.rna) %>%
+  left_join(pt.16s) %>%
+  mutate(paired = (pt.id.16s == pt.id.rna)) %>%
+  mutate(paired = ifelse(is.na(paired), "CONTROL", paired))
+```
+
+Directly reading in plotting object, if preferred to running the above code. 
+```{r}
+# write.csv(dist.res.lab, "../data/16s_distances.csv")
+dist.res.lab <- read.csv("../data/16s_distances.csv")
+```
+
+
+
+# Plot
+
+```{r}
+dist.res.lab %>%
+  mutate(paired.char = if_else(is.na(specimen.type),
+                          true = "Control",
+                          false = specimen.type)) %>%
+  ggplot(aes(x=paired, y=distance, fill = paired.char)) +
+  geom_violin(draw_quantiles = c(.25,.5,.75), alpha = .4) +
+  geom_point(position = position_jitterdodge(jitter.width = .25),
+             aes(color = paired.char), alpha = .7, show.legend = F)+
+  theme_bw(base_size = 9) +
+  scale_fill_viridis_d(option = "A", aesthetics = c("color", "fill")) +
+  labs(x = "Distance between",
+       y = "Bray-Curtis distance from 16S to RNAseq",
+       fill = "Tissue Source") +
+  scale_x_discrete(breaks = c("TRUE", "FALSE", "CONTROL"),
+                   labels = c("Paired\nsamples", "Unpaired\nsamples", "Control")) +
+  coord_flip() +
+  theme(legend.position = "top") 
+
+ggsave("../figures/16s_distance_boxplot.png", height=2.5, width=3.5)
+```
+
+# Test is distances between groups are different
+
+```{r}
+test.tum <- 
+  dist.res.lab %>%
+  filter(specimen.type == "Tumor")
+table(test.tum$paired)
+
+kw.tum.paired <- kruskal.test(distance ~ paired, data = test.tum)
+kw.tum.paired
+```
+
+The 16S samples are significantly more similar to RNAseq samples from the same patient than to different patients (Kruskal-Wallis rank sum test p-value = `r kw.tum.paired$p.value`).
+
+```{r}
+test.paired <- 
+  dist.res.lab %>%
+  filter(paired == "TRUE")
+table(test.paired$specimen.type)
+
+kw.spectype <- kruskal.test(distance ~ specimen.type, data = test.paired)
+kw.spectype
+```
+
+The RNAseq-derived microbes are not significantly different from 16S-derived microbes from tumors or adjacent normal tissue (Kruskal-Wallis rank sum test p-value = `r kw.spectype$p.value`).
+
+```{r}
+test.norm <- 
+  dist.res.lab %>%
+  filter(specimen.type == "Normal") 
+table(test.norm$paired)
+
+test.norm %>%
+  ggplot(aes(x = paired, y = distance)) +
+  geom_boxplot()
+
+kw.test.norm <- kruskal.test(distance ~ paired, data = test.norm)
+kw.test.norm
+```
+
+In the normal samples, the paired samples are more similar to each other than the unpaired samples (p = `r kw.test.norm$p.value`)
+
+```{r}
+test.cont.normpair <- 
+  dist.res.lab %>%
+  filter(paired == "CONTROL" |(paired == "TRUE" & specimen.type == "Normal")) 
+# table(test.tum$paired)
+
+kruskal.test(distance ~ paired, data = test.cont.normpair)
+```
+
+The paired normal samples are significantly different than controls (p-value = 0.0007169).
+
+```{r}
+test.cont.normunpair <- 
+  dist.res.lab %>%
+  filter(paired == "CONTROL" |(paired == "FALSE" & specimen.type == "Normal"))
+
+kruskal.test(distance ~ paired, data = test.cont.normunpair)
+```
+
+The unpaired normal samples are significantly different than controls (p-value = 0.0001215).
+
+```{r}
+test.cont.tumpair <- 
+  dist.res.lab %>%
+  filter(paired == "CONTROL" |(paired == "TRUE" & specimen.type == "Tumor"))
+
+kruskal.test(distance ~ paired, data = test.cont.tumpair)
+```
+
+The paired tumor samples are significantly different than controls (p-value = 0.0005125).
+
+
+```{r}
+test.cont.tumunpair <- 
+  dist.res.lab %>%
+  filter(paired == "CONTROL" |(paired == "FALSE" & specimen.type == "Tumor"))
+
+kruskal.test(distance ~ paired, data = test.cont.tumunpair)
+```
+
+The unpaired tumor samples are significantly different than controls (p-value = 2.65e-08).

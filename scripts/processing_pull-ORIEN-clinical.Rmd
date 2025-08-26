@@ -1,0 +1,187 @@
+---
+title: "pull clinical data for ORIEN samples"
+author: "Rebecca Hoyd"
+date: "5/26/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(readxl)
+```
+
+# Load data
+
+```{r}
+
+coad.ra <- read.csv("/fs/ess/PAS1695/projects/exorien/data/drake-output/2022-03-16/2022-03-16_RA-with-taxonomy_COAD.csv", stringsAsFactors = F) 
+read.ra <- read.csv("/fs/ess/PAS1695/projects/exorien/data/drake-output/2022-03-16/2022-03-16_RA-with-taxonomy_READ.csv", stringsAsFactors = F) 
+clinLink <- read_excel("/fs/ess/PAS1695/projects/exorien/data/clinical/20PRJ060OSU_20210707_ClinicalMolLinkage_V4_as-in-drake.xlsx")
+clinDiag <- read.csv("/fs/ess/PAS1695/projects/exorien/data/clinical/20PRJ060OSU_20210712_Diagnosis_V4.csv", stringsAsFactors = F)
+
+patientmaster <- read.csv("/fs/ess/PAS1695/projects/exorien/data/clinical/20PRJ060OSU_20210712_PatientMaster_V4.csv")
+survival <- read.csv("/fs/ess/PAS1695/projects/exorien/data/clinical/20PRJ060OSU_20210712_VitalStatus_V4.csv")
+
+```
+
+# Choose sample/diagnosis/avatarkey sets
+
+```{r which samples actually exist}
+exo.ra <- bind_rows(coad.ra, read.ra)
+```
+
+```{r get avatarkey rnaseq combos}
+# Take earliest possible sample for each patient, then intersect with coad/read samples. This should get us to one sample per patient, limiting to patients whose earliest sample was from a CRC. Also include specimen site of collection and origin.
+avatarRNA <- clinLink %>%
+  select(ORIENAvatarKey, RNASeq, `Age At Specimen Collection`,
+         SpecimenSiteOfOrigin, SpecimenSiteOfCollection, TCGA.code) %>%
+  filter(`Age At Specimen Collection` == min(`Age At Specimen Collection`),
+         .by = ORIENAvatarKey) %>%
+  dplyr::rename("AvatarKey" = "ORIENAvatarKey")
+
+goodsamps <- intersect(exo.ra$sample, avatarRNA$RNASeq)
+
+# Some people appear to have had multiple samples taken at once. Where possible, choose the sample that matches the primary disease site. If there are multiple matches, pick randomly. If there are no matches, choose whatever seems closest in the body, which in effect this time is choosing pelvis samples over liver samples.
+
+avatarRNA.dups <- avatarRNA %>%
+  filter(RNASeq %in% goodsamps) %>%
+  add_count(AvatarKey) %>%
+  filter(n > 1)
+
+avatarRNA.dedup <- avatarRNA.dups %>%
+  mutate(SpecimenSiteOfCollection2 = gsub("Colon, rectosigmoid junction",
+                                          "Rectosigmoid junction",
+                                          SpecimenSiteOfCollection),
+         SpecimenSiteOfCollection2 = gsub("Colon, sigmoid",
+                                          "Sigmoid colon",
+                                          SpecimenSiteOfCollection2),
+         match.locs = SpecimenSiteOfOrigin == SpecimenSiteOfCollection2) %>%
+  mutate(anymatch = any(match.locs == T), .by = AvatarKey) %>%
+  filter(match.locs == T | anymatch == F) %>%
+  filter(!grepl("Liver", SpecimenSiteOfCollection)) %>%
+  group_by(AvatarKey) %>%
+  mutate(randselect = row_number()) %>%
+  filter(randselect == 1) %>%
+  select(AvatarKey, RNASeq, `Age At Specimen Collection`,
+         SpecimenSiteOfCollection, SpecimenSiteOfOrigin, TCGA.code)
+
+any(duplicated(avatarRNA.dedup$AvatarKey))
+all(avatarRNA.dups$AvatarKey %in% avatarRNA.dedup$AvatarKey)
+
+avatar_RNA_crc <- avatarRNA %>%
+  filter(RNASeq %in% goodsamps) %>%
+  filter(!AvatarKey %in% avatarRNA.dups$AvatarKey) %>%
+  bind_rows(avatarRNA.dedup)
+any(duplicated(avatar_RNA_crc$AvatarKey))
+```
+
+```{r get as specific diagnoses as possible}
+# Join to all possible CRC diagnoses, then choose earliest diagnosis to determine EO v LO. Does ASTER Insights have a diagnosis key for the samples? Would that even be possible for complex cancer data? At best, I could exclude diagnoses that occured after the sample was taken, but that should already be handled by taking the earliest possible diagnosis. The result to this will be a set of the earliest known information for each patient. This was sufficient for the EO v LO analysis, but we want all the details for this clinical pull. Further specificity than this would require harmonizing by several columns and be very manual.
+
+avatar_diag_RNA.quickjoin <- avatar_RNA_crc %>%
+    left_join(clinDiag) %>%
+    filter(PrimaryDiagnosisSite %in% c(
+      "Colon, NOS",
+      "Rectum, NOS",
+      "Sigmoid colon",
+      "Transverse colon",                                                          
+      "Overlapping lesion of colon",
+      "Rectosigmoid junction", 
+      "Descending colon" ,
+      "Hepatic flexure of colon" ,
+      "Ascending colon" ,
+      "Overlapping lesion of rectum, anus and anal canal",
+      "Splenic flexure of colon",
+      "Anal canal",
+      "Anus, NOS"
+    )) %>%
+    filter(AgeAtDiagnosis == min(AgeAtDiagnosis),
+           .by = "AvatarKey") %>%
+    add_count(RNASeq)
+  
+
+  # There's a very small number of patients who appear to have gotten multiple diagnoses simultaneously at their earliest diagnosis. As the Primary Diagnosis site and specimen origin do not perfectly align, I want to manually look at these to make the best match. 3 of these 4 had clear winners in pairing, but SL324797 could have been either diagnosis. The information encoded was identical between diagnoses except for TNM staging, so I chose the sigmoid diagnosis as the letters in the staging matched the letters I expected after googling.
+
+avatar_diag_RNA.multi <- avatar_diag_RNA.quickjoin %>%
+  filter(n > 1) %>%
+  select(RNASeq, AvatarKey, SpecimenSiteOfOrigin, SpecimenSiteOfCollection, PrimaryDiagnosisSite, TCGA.code)
+link.filtering <- clinLink %>%
+  filter(RNASeq %in% avatar_diag_RNA.multi$RNASeq) %>%
+  select(RNASeq, SpecimenSiteOfOrigin, SpecimenSiteOfCollection, `Primary/Met`, TCGA.code)
+
+avatar_diag_RNA.dedup <- avatar_diag_RNA.quickjoin %>%
+  filter(
+    (RNASeq == "SL408460" & PrimaryDiagnosisSite == "Colon, NOS") |
+      (RNASeq == "SL342656" & PrimaryDiagnosisSite == "Rectosigmoid junction") |
+      (RNASeq == "SL404090" & PrimaryDiagnosisSite == "Ascending colon") |
+      (RNASeq == "SL324797" & PrimaryDiagnosisSite == "Sigmoid colon") |
+      !(RNASeq %in% avatar_diag_RNA.multi$RNASeq)
+      
+  )
+```
+
+```{r look for MSI}
+tmarks <- read.csv("/fs/ess/PAS1695/projects/exorien/data/clinical/20PRJ060OSU_20210712_TumorMarker_V4.csv")
+
+msi.test <- tmarks %>%
+  filter(grepl("MSI", TMarkerTest)) %>%
+  group_by(AvatarKey) %>%
+  filter(AgeAtTumorMarkerTest == min(AgeAtTumorMarkerTest)) %>%
+  select(AvatarKey, TMarkerResult) %>%
+  distinct() %>%
+  summarize(TMarkerResult = paste(TMarkerResult, collapse = ","))
+any(duplicated(msi.test$AvatarKey))
+```
+
+```{r grab desired patient demographic  and survival info}
+# Wait, where's the demographic info? There's no way we don't have this, right???
+
+# all.poss <- list.files("/fs/ess/PAS1695/projects/exorien/data/clinical", pattern = ".csv")
+# tmp <- lapply(all.poss,
+#        function(x)
+#          read.csv(file.path("/fs/ess/PAS1695/projects/exorien/data/clinical", x)) %>%
+#          colnames())
+#   
+# names(tmp) <- all.poss
+# tmp2 <- lapply(all.poss, function(x)
+#   tmp[[x]] %>%
+#     as.data.frame %>%
+#     mutate(file = x)) %>%
+#   bind_rows()
+# colnames(tmp2)[1] <- "colname"
+# 
+# tmp3 <- tmp2 %>%
+#   group_by(colname) %>%
+#   summarize(files.in = paste(file, collapse = ", "))
+
+# Sex is in patient master, just didn't see it earlier somehow. So is race and ethnicity. Well, glad I double checked. This might be a useful function, maybe I should drop it in lab logistics.
+
+pm.join <- patientmaster %>%
+  select(AvatarKey, Sex, Race, Ethnicity)
+
+
+surv.join <- survival %>%
+  select(AvatarKey, VitalStatus, AgeAtLastContact)
+
+full_clinical <- avatar_diag_RNA.dedup %>%
+  left_join(patientmaster)%>%
+  left_join(surv.join) %>%
+  left_join(msi.test)
+
+any(duplicated(full_clinical$AvatarKey))
+```
+
+
+
+```{r remove PHI information and save}
+full_clinical_cleaned <- full_clinical %>%
+  select(-contains("Year"), -n)
+
+colnames(full_clinical_cleaned)
+write.csv(full_clinical_cleaned, "../data/clinical_ORIEN.csv", row.names = F)
+```
+
+
+

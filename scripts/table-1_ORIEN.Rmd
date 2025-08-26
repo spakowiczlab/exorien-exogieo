@@ -1,0 +1,190 @@
+---
+title: "ORIEN table 1"
+author: "Rebecca Hoyd"
+date: "5/31/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tableone)
+library(openxlsx)
+library(readxl)
+```
+
+# ORIEN
+
+## Load data
+
+```{r}
+clin <- read.csv("../data/clinical_ORIEN.csv")
+
+```
+
+## Format
+
+```{r raw values}
+tab1in <- clin %>%
+  mutate(agestat = ifelse(AgeAtDiagnosis < 50, "EO", "LO"),
+         MSI = TMarkerResult) 
+allvars <- c("TCGA.code", "Sex", "Race", "PrimaryDiagnosisSite", "PathGroupStage", "Histology", "MSI")
+tab1 <- CreateTableOne(allvars, strata = "agestat", data = tab1in, factorVars = allvars)
+
+write.csv(print(tab1), "../tables/tab1_ORIEN.csv")
+```
+
+## Condensing groups
+
+```{r}
+condense <- read_excel("../data/230531ExogieoMetadataKey.xlsx", skip = 2)
+colnames(condense) <- c("category", "new", "old")
+```
+
+```{r condensed groups}
+fix.groups <- function(colname, dat){
+  tmp.condense <- condense %>%
+    filter(category == !!colname & old != "NA") %>%
+    mutate(old = str_trim(old)) %>%
+    rename(!!colname := "old")
+  
+  dat.tmp <-dat %>%
+    left_join(tmp.condense) %>%
+    mutate(!!colname := new) %>%
+    select(-new, -category)
+  
+  return(dat.tmp)
+}
+
+fix.groups.oddname <- function(colname, pairname, dat){
+  tmp.condense <- condense %>%
+    filter(category == !!colname & old != "NA") %>%
+    mutate(old = str_trim(old)) %>%
+    rename(!!pairname := "old")
+  
+  dat.tmp <-dat %>%
+    left_join(tmp.condense) %>%
+    mutate(!!colname := new) %>%
+    select(-new, -category)
+  
+  return(dat.tmp)
+}
+```
+
+```{r manual categories}
+adeno <- c("Adenocarcinoma In Adenomatous Polyp",
+           "Adenocarcinoma In Adenomatous Polyposis Coli",
+           "Adenocarcinoma In Tubulovillous Adenoma",
+           "Adenocarcinoma, NOS",
+           "Adenosquamous Carcinoma")
+mucino <- c("Mucinous Adenocarcinoma")
+carc <- c("Carcinoma, NOS",
+          "Medullary Carcinoma (Breast)",
+          "Neuroendocrine Carcinoma, NOS",
+          "Signet Ring Cell Carcinoma" )
+pap <- c("Micropapillary Carcinoma, NOS")
+mixsub <- c("Adenocarcinoma With Mixed Subtypes")
+
+amer <- c("American Indian, Aleutian, or Eskimo (includes all indigenous populations of the Western hemisphere)")
+asian <- c("Asian Indian",
+           "Asian Indian or Pakistani, NOS",
+          "Chinese",
+          "Filipino",
+          "Japanese",
+          "Korean",
+          "Other Asian, including Asian, NOS and Oriental, NOS")
+othrace <- c("Other",
+             "Unknown/Not Reported")
+white <- "White"
+black <- "Black"
+```
+
+```{r}
+newclin <- tab1in
+
+newclin <- fix.groups.oddname("Tumor Location", "PrimaryDiagnosisSite", newclin)
+newclin <- fix.groups.oddname("MSS Status", "MSI", newclin)
+
+for(i in c("PrimaryDiagnosisSite", "PathGroupStage")){
+  newclin <- fix.groups(i, newclin)
+}
+
+
+newclin <- newclin %>%
+  mutate(Histology = case_when(Histology %in% adeno ~"Adenocarcinoma, NOS",
+                               Histology %in% mucino ~ "Mucinous adenocarcinoma",
+                               Histology %in% carc ~ "Carcinoma",
+                               Histology %in% pap ~ "Papillary adenocarcinoma",
+                               Histology %in% mixsub ~"Adenocarcinoma with mixed subtypes"),
+         Race = case_when(Race %in% amer ~ "American Indian or Alaska Native",
+                          Race %in% asian ~ "Asian",
+                          Race %in% othrace ~ "Other",
+                          Race %in% white ~ "Caucasian",
+                          Race %in% black ~ "Black or African American"),
+         `Tumor Stage` = gsub("NA", "Missing", replace_na(PathGroupStage, "Missing")),
+         `MSS Status` = gsub("NA", "Missing", replace_na(`MSS Status`, "Missing")))
+
+
+allvars <- c("Sex", "Race", "PrimaryDiagnosisSite", "Tumor Location", "Tumor Stage", "Histology", "MSS Status")
+tab1new <- CreateTableOne(allvars, strata = "agestat", data = newclin, factorVars = allvars)
+
+write.csv(print(tab1new), "../tables/tab1_ORIEN_condensed.csv")
+write.csv(newclin, "../data/clinical_ORIEN_curated.csv")
+```
+
+# TCGA
+
+```{r}
+tcga.clin <- read.csv("/fs/ess/PAS1695/projects/exogieo/data/drake-output/2021-02-15_tcga_clinical.csv")
+tcga.samps <- read.csv("/fs/ess/PAS1695/projects/exogieo/data/ORIEN-processing/2022-03-16_normalized-expressions.csv")
+tcga.msi <- read.delim("/fs/ess/PAS1695/projects/exogieo/data/key_all-sample-ids-with-pnt-barcodes-msi_pole_pold_status_358.txt")
+```
+
+```{r}
+tcga.clin.combined <- tcga.clin %>%
+  filter(sample.expression %in% tcga.samps$sample) %>%
+  left_join(tcga.msi)
+
+tcga.combined.form <- tcga.clin.combined %>%
+  mutate(
+    `Tumor Location` = case_when(
+      tissue_or_organ_of_origin %in% c(
+        "Ascending colon", "Cecum",
+        "Hepatic flexure of colon", 
+        "Transverse colon") ~ "Right",
+      tissue_or_organ_of_origin %in% c(
+        "Descending colon", "Rectosigmoid junction",
+        "Rectum, NOS", "Sigmoid colon",
+        "Splenic flexure of colon") ~ "Left",
+      tissue_or_organ_of_origin %in% c(
+        "Colon, NOS",
+        "Connective, subcutaneous and other soft tissues of abdomen") ~ "Other"),
+    `Tumor Stage` = paste("Stage", toupper(str_remove(gsub(".* ", "", tumor_stage), "a|b|c"))),
+    `Tumor Stage` = ifelse(grepl("REPORTED", `Tumor Stage`),NA, `Tumor Stage`),
+    `MSS Status` = case_when(
+      mononucleotide_and_dinucleotide_marker_panel_analysis_status == "Indeterminate" ~
+        "Indeterminate",
+      mononucleotide_and_dinucleotide_marker_panel_analysis_status == "MSS" & 
+        mut_hg38_POLE.x == F ~ "MSS and POLE negative",
+      mononucleotide_and_dinucleotide_marker_panel_analysis_status == "MSI-H" |
+        mut_hg38_POLE.x == T ~ "MSI-H or POLE positive"),
+    `MSS Status` = replace_na(`MSS Status`, "Missing"),
+    Race = race,
+    Sex = str_to_sentence(gender),
+    Histology = if_else(primary_diagnosis %in% c("Adenocarcinoma in tubolovillous adenoma",
+                                                 "Tubular adenocarcinoma Carcinoma"),
+                        "Tubular adenocarcinoma",
+                        primary_diagnosis),
+    agestat = ifelse(age_at_diagnosis/365.25 < 50, "EO", "LO"),
+    PrimaryDiagnosisSite = primary_site) 
+
+tcgavars <- c("Sex", "Race", "PrimaryDiagnosisSite",
+              "Tumor Location", "Tumor Stage", "Histology", "MSS Status")
+tab1tcga <- CreateTableOne(tcga.combined.form, vars = tcgavars, factorVars = tcgavars, strata = "agestat")
+tab1tcga
+
+write.csv(print(tab1tcga), "../tables/tab1_TCGA_condensed.csv")
+write.csv(tcga.combined.form, "../data/clinical_TCGA_curated.csv")
+```
+

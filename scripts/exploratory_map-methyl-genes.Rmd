@@ -1,0 +1,25 @@
+---
+title: "exploratory dms mapping"
+author: "Rebecca Hoyd"
+date: "1/31/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(methylKit)
+library(genomation)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+```
+
+# Load methylation microbe correlation results
+
+```{r}
+corr.res <- read.csv("../data/correlations_microbes-with-methylation.csv")
+
+gene.obj=readTranscriptFeatures(system.file("extdata", "refseq.hg18.bed.txt", 
+                                           package = "methylKit"))
+```
+

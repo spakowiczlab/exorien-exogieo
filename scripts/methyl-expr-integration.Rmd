@@ -1,0 +1,60 @@
+---
+title: "Adjusting Selen's code to fit with our directory structure"
+author: "Rebecca Hoyd"
+date: "6/13/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library (TCGAutils)
+library(TCGAbiolinks)
+library(SummarizedExperiment)
+library(GenomicDataCommons)
+library(ELMER)
+```
+
+# Load barcodes
+
+```{r}
+uuids <- read.table("../data/key_all-sample-ids-with-pnt-barcodes-msi_pole_pold_status_358.txt", sep = "\t", header = T)
+```
+
+# Set up data download
+
+Selen originally used the legacy server, which has been retired. I'm hoping this should get us the same results.
+
+```{r}
+query.met <- GDCquery(project  = c("TCGA-COAD","TCGA-READ"),
+                      legacy = FALSE,
+                      data.category = "DNA Methylation",
+                      platform = "Illumina Human Methylation 450",
+                      data.type = "Methylation Beta Value",
+                      barcode = uuids$barcode.methylation)
+
+query.exp <- GDCquery(project = c("TCGA-COAD","TCGA-READ"),
+                      legacy = FALSE,
+                      data.category = "Transcriptome Profiling",
+                      data.type = "Gene Expression Quantification",
+                      # platform = "IlluminaHiSeq_RNASeq", 
+                      barcode = uuids$barcode.expression)
+
+
+# GDCdownload(query = query.met, directory = "/fs/scratch/PAS1695/projects/exogieo/GDCdata/methyl")
+# GDCdownload(query = query.exp, directory = "/fs/scratch/PAS1695/projects/exogieo/GDCdata/expr")
+
+coad_read.met <- GDCprepare(query = query.met,
+                           save = TRUE,
+                           directory = "/fs/scratch/PAS1695/projects/exogieo/GDCdata/methyl", 
+                           save.filename = "../data/coad-readDNAmet.rda",
+                           summarizedExperiment = TRUE)
+
+coad_read.exp <- GDCprepare(query = query.exp,
+                            save = TRUE,
+                            save.filename = "../data/coad_readExp.rda", 
+                            directory = "/fs/scratch/PAS1695/projects/exogieo/GDCdata/expr")
+```
+
+
+

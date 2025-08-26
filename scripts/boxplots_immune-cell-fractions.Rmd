@@ -1,0 +1,120 @@
+---
+title: "Immune fraction boxplots"
+author: "Rebecca Hoyd"
+date: "2025-08-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+# Load data
+
+```{r}
+orien.immune <- read.csv("../tables/s_orien-immune-frac.csv")
+tcga.immune <- read.csv("../tables/s_tcga-immune-frac.csv")
+
+orien.clin <- read.csv("../data/clinical_ORIEN_curated.csv")
+tcga.clin <- read.csv("../data/clinical_TCGA_curated.csv")
+```
+
+# Format
+
+```{r}
+oldlabs <- c("B.cells.naive", "B.cells.memory", 
+             "Plasma.cells", "T.cells.CD8", "T.cells.CD4.naive", 
+             "T.cells.CD4.memory.resting", "T.cells.CD4.memory.activated", "T.cells.follicular.helper",
+             "T.cells.gamma.delta", "T.cells.regulatory..Tregs.", "NK.cells.resting", 
+             "NK.cells.activated", "Monocytes", "Macrophages.M0", 
+             "Macrophages.M1", "Macrophages.M2", "Dendritic.cells.resting", 
+             "Dendritic.cells.activated", "Mast.cells.resting", "Mast.cells.activated", 
+             "Eosinophils", "Neutrophils", "TILs")
+
+newlabs <- c("Naive B Cells", "Memory B Cells", 
+             "Plasma Cells", "CD8 T Cells", "Naive CD4 T Cells", 
+             "Resting Memory CD4 T Cells", "Activated Memory CD4 T Cells", "Follicular Helper T Cells",
+             "Gamma Delta T Cells", "Regulatory T Cells", "Resting NK Cells", 
+             "Activated NK Cells", "Monocytes", "M0 Macrophages",
+             "M1 Macrophages", "M2 Macrophages", "Resting Dendritic Cells", 
+             "Activated Dendritic Cells", "Resting Mast Cells", "Activated Mast Cells", 
+             "Eosonophils", "Neutrophils", "TILs")
+
+lab.df <- as.data.frame(cbind(ImmuneCell = oldlabs, newlabs))
+```
+
+```{r}
+orien.plot <- orien.clin %>%
+  select(RNASeq, agestat) %>%
+  rename("sample" = "RNASeq") %>%
+  left_join(orien.immune) %>%
+  pivot_longer(-c("sample", "agestat"), names_to = "ImmuneCell", values_to = "CellFrac") %>%
+  left_join(lab.df)
+
+tcga.plot <- tcga.clin %>%
+  select(sample.expression, agestat) %>%
+  # rename("sample" = "RNASeq") %>%
+  left_join(tcga.immune) %>%
+  pivot_longer(-c("sample.expression", "agestat"), names_to = "ImmuneCell", values_to = "CellFrac")
+```
+
+
+
+# Testing for significant differences
+
+```{r}
+test.cell.agediff <- function(data, celltype){
+  tmp <- data %>%
+    filter(ImmuneCell == celltype)
+  tres <- t.test(CellFrac ~ agestat, data = tmp)
+  return(tres$p.value)
+}
+
+cells <- unique(orien.plot$ImmuneCell)
+
+orien.tres <- unlist(lapply(cells, function(x) test.cell.agediff(orien.plot, x)))
+orien.tres.df <-as.data.frame(cbind(ImmuneCell = cells,
+                                    p.val = orien.tres,
+                                    p.adj = p.adjust(orien.tres))) %>%
+  left_join(lab.df)
+
+
+
+tcga.tres <- unlist(lapply(cells, function(x) test.cell.agediff(tcga.plot, x)))
+tcga.tres.df <- as.data.frame(cbind(ImmuneCell = cells,
+                                    p.val = tcga.tres,
+                                    p.adj = p.adjust(tcga.tres)))
+```
+
+# Plots
+
+```{r}
+orien.sig <- orien.tres.df %>%
+  mutate(agestat = "EO",
+         CellFrac = .6,
+         p.adj = as.numeric(p.adj),
+         plab = paste0("p.value=", round(p.adj,3))) %>%
+  filter(p.adj < 0.05)
+
+orien.plot %>%
+  ggplot(aes(x = agestat, y = CellFrac)) +
+  facet_wrap(vars(newlabs)) +
+  geom_boxplot() +
+  geom_text(data = orien.sig, aes(label = plab), size = 3, hjust = .25) +
+  scale_x_discrete(breaks = c("EO", "LO"), labels = c("EO", "AO")) +
+  labs(x = "Onset", y = "Cell Fraction") +
+  theme_bw() 
+ggsave("../figures/boxplot_ORIEN_immune-age.png", height = 10, width = 10)
+```
+
+```{r}
+tcga.plot %>%
+  ggplot(aes(x = agestat, y = CellFrac)) +
+  facet_wrap(vars(ImmuneCell)) +
+  geom_boxplot() +
+  scale_x_discrete(breaks = c("EO", "LO"), labels = c("EO", "AO")) +
+  labs(x = "Onset", y = "Cell Fraction") +
+  theme_bw() 
+ggsave("../figures/boxplot_TCGA_immune-age.png", height = 10, width = 10)
+```

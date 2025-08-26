@@ -1,0 +1,27 @@
+---
+title: "Summarizing DESeq results"
+author: "Rebecca Hoyd"
+date: "7/15/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+```
+
+# Load data
+
+```{r}
+res.orien <- read.csv("../data/deseq2_all-cohort_ORIEN-data.csv")
+res.tcga <- read.csv("../data/deseq2_all-cohort.csv")
+
+res.16s <- read.csv("../../../data/16s_modelling_eo-lo.csv")
+```
+
+# Format
+
+# Plot
+
+

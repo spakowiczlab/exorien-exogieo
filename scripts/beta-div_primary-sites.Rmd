@@ -1,0 +1,111 @@
+---
+title: "Primary site diversity"
+author: "Rebecca Hoyd"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(vegan)
+```
+
+# Load data
+
+```{r}
+clin.orien <- read.csv("../data/clinical_ORIEN_curated.csv")
+clin.tcga <- read.csv("../data/clinical_TCGA_curated.csv")
+
+mics.or <- read.csv("/fs/ess/PAS1695/projects/exorien/data/drake-output/2022-03-16/2022-03-16_unnormalized-microbes_humanRNAfilt_w_taxonomy.csv", stringsAsFactors = F) %>%
+  filter(sample %in% clin.orien$RNASeq)
+mics.tcga <- read.csv("/fs/ess/PAS1695/projects/exorien/data/drake-output/2022-03-16/2022-03-16_TCGA_unnormalized-microbes_humanRNAfilt_w_taxonomy.csv", stringsAsFactors = F) %>%
+  filter(sample %in% clin.tcga$sample.microbe)
+```
+
+# adonis2
+
+```{r}
+mics.or.wide <- mics.or %>%
+  select(sample, species, counts) %>%
+  filter(species != "s__Homo sapiens") %>%
+  pivot_wider(names_from = "species", values_from = "counts") %>%
+  arrange(sample) %>%
+  column_to_rownames(var = "sample")
+
+mics.tcga.wide <- mics.tcga %>%
+  select(sample, species, counts) %>%
+  filter(species != "s__Homo sapiens") %>%
+  pivot_wider(names_from = "species", values_from = "counts") %>%
+  arrange(sample) %>%
+  column_to_rownames(var = "sample")
+
+clin.orien.sort <- clin.orien %>%
+  arrange(RNASeq) %>%
+  mutate(PrimaryDiagnosisSite = replace_na(PrimaryDiagnosisSite, "Unknown"))
+clin.tcga.sort <- clin.tcga %>%
+  arrange(sample.microbe) %>%
+  mutate(PrimaryDiagnosisSite = replace_na(PrimaryDiagnosisSite, "Unknown"))
+
+identical(clin.orien.sort$RNASeq, rownames(mics.or.wide))
+identical(clin.tcga.sort$sample.microbe, rownames(mics.tcga.wide))
+```
+
+```{r}
+adon.orien <- adonis2(mics.or.wide ~ PrimaryDiagnosisSite, data = clin.orien.sort)
+adon.orien
+
+adon.tcga<- adonis2(mics.tcga.wide ~ PrimaryDiagnosisSite, data = clin.tcga.sort)
+adon.tcga
+```
+
+# Dimension reduction for vis
+
+```{r, eval = FALSE}
+pca.orien <- prcomp(mics.or.wide)
+pca.orien.plotdat <- clin.orien.sort %>%
+  select(RNASeq, PrimaryDiagnosisSite)
+pca.orien.plotdat$PC1 <- pca.orien$x[1,]
+pca.orien.plotdat$PC2 <- pca.orien$x[2,]
+
+pca.orien.plotdat %>%
+  filter(PC1 < 1000) %>%
+  ggplot(aes(x = PC1, y = PC2, color = PrimaryDiagnosisSite, fill = PrimaryDiagnosisSite)) +
+  geom_point() +
+  stat_ellipse()
+```
+
+```{r}
+orienMDS <- metaMDS(mics.or.wide, try = 20, trymax = 100)
+
+orienMDS.plot <- as.data.frame(scores(orienMDS)$sites)
+orienMDS.plot$primsite <- clin.orien.sort$PrimaryDiagnosisSite
+
+orienMDS.plot %>%
+  ggplot(aes(x = NMDS1, y = NMDS2, color = primsite, fill = primsite)) +
+  stat_ellipse() +
+  geom_point() +
+  scale_fill_viridis_d(aesthetics = c("color", "fill"), name = "Primary Site") +
+  labs(title = paste0("ORIEN beta diversity, p.value=", adon.orien$`Pr(>F)`[1])) +
+  theme_bw()
+ggsave("../figures/nmds_ORIEN-betadiv.png")
+# plot(orienMDS)
+```
+
+```{r}
+tcgaMDS <- metaMDS(mics.tcga.wide, try = 20, trymax = 100)
+
+tcgaMDS.plot <- as.data.frame(scores(tcgaMDS)$sites)
+tcgaMDS.plot$primsite <- clin.tcga.sort$PrimaryDiagnosisSite
+
+tcgaMDS.plot %>%
+  mutate(primsite = gsub("Connective.*", "Soft tissues", primsite)) %>%
+  ggplot(aes(x = NMDS1, y = NMDS2, color = primsite, fill = primsite)) +
+  stat_ellipse() +
+  geom_point() +
+  scale_fill_viridis_d(aesthetics = c("color", "fill"), name = "Primary Site") +
+  labs(title = paste0("TCGA beta diversity, p.value=", adon.tcga$`Pr(>F)`[1])) +
+  theme_bw()
+ggsave("../figures/nmds_TCGA-betadiv.png")
+```
+

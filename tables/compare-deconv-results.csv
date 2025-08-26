@@ -1,0 +1,20 @@
+"estimate","statistic","p.value","method","alternative","CIBERSORT","OTHER","padj"
+-0.0907342447235761,96610002.3759006,0.00977510265210391,"Spearman's rank correlation rho","two.sided","Neutrophils","Neutrophil_TIMER",0.146626539781559
+-0.0907342447235761,96610002.3759006,0.00977510265210391,"Spearman's rank correlation rho","two.sided","Neutrophils","Neutrophil_QUANTISEQ",0.146626539781559
+-0.00926473549543204,89393973.7986654,0.792336743782151,"Spearman's rank correlation rho","two.sided","Macrophage","Macrophage_TIMER",1
+-0.00926473549543204,89393973.7986654,0.792336743782151,"Spearman's rank correlation rho","two.sided","Macrophage","Macrophage_EPIC",1
+0.00767336440091468,87893709.2941398,0.82738724656854,"Spearman's rank correlation rho","two.sided","T.cells.CD8","T cell CD8+_TIMER",1
+0.00767336440091468,87893709.2941398,0.82738724656854,"Spearman's rank correlation rho","two.sided","T.cells.CD8","T cell CD8+_QUANTISEQ",1
+0.00767336440091468,87893709.2941398,0.82738724656854,"Spearman's rank correlation rho","two.sided","T.cells.CD8","T cell CD8+_EPIC",1
+0.0313090376027553,85800218.1846124,0.373512648423592,"Spearman's rank correlation rho","two.sided","NK.cells","NK cell_QUANTISEQ",1
+0.0313090376027553,85800218.1846124,0.373512648423592,"Spearman's rank correlation rho","two.sided","NK.cells","NK cell_EPIC",1
+0.0332637121660435,85627086.0810621,0.344402904555137,"Spearman's rank correlation rho","two.sided","Macrophages.M2","Macrophage M2_QUANTISEQ",1
+0.0410672243772272,84935902.745699,0.243016073035777,"Spearman's rank correlation rho","two.sided","Macrophages.M1","Macrophage M1_QUANTISEQ",1
+0.0449809708907989,84589249.0472349,0.200949459239169,"Spearman's rank correlation rho","two.sided","T.cells.CD4","T cell CD4+_TIMER",1
+0.0449809708907989,84589249.0472349,0.200949459239169,"Spearman's rank correlation rho","two.sided","T.cells.CD4","T cell CD4+ (non-regulatory)_QUANTISEQ",1
+0.0449809708907989,84589249.0472349,0.200949459239169,"Spearman's rank correlation rho","two.sided","T.cells.CD4","T cell CD4+_EPIC",1
+0.0709972431050176,82284900.2724655,0.0433786068912049,"Spearman's rank correlation rho","two.sided","Monocytes","Monocyte_QUANTISEQ",0.563921889585664
+0.167336537959162,73751804.7455068,1.67670915724325e-06,"Spearman's rank correlation rho","two.sided","B.cells","B cell_TIMER",3.01807648303786e-05
+0.167336537959162,73751804.7455068,1.67670915724325e-06,"Spearman's rank correlation rho","two.sided","B.cells","B cell_QUANTISEQ",3.01807648303786e-05
+0.167336537959162,73751804.7455068,1.67670915724325e-06,"Spearman's rank correlation rho","two.sided","B.cells","B cell_EPIC",3.01807648303786e-05
+0.173117275709377,73239785.3507877,7.16386570062501e-07,"Spearman's rank correlation rho","two.sided","T.cells.regulatory..Tregs.","T cell regulatory (Tregs)_QUANTISEQ",1.36113448311875e-05

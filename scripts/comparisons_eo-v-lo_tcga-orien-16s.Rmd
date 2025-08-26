@@ -1,0 +1,188 @@
+---
+title: "comparisons_eo-v-lo_TCGA-ORIEN"
+author: "Rebecca Hoyd"
+date: "5/10/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(UpSetR)
+library(eulerr)
+```
+
+# Load data
+```{r}
+res.ORIEN <- read.csv("../data/deseq2_all-cohort_ORIEN-data.csv")
+res.TCGA <- read.csv("../data/deseq2_all-cohort.csv")
+res.16s <- read.csv("../data/16s_modelling_eo-lo.csv")
+```
+
+# Formatting
+
+```{r}
+taxalist <- list(
+  ORIEN = res.ORIEN$Taxa,
+  TCGA = res.TCGA$Taxa,
+  "16s" = res.16s$microbe
+)
+```
+
+Note: LO is positive for the DESeq results, but EO is positive for 16S.
+```{r}
+prepIndicatorsDESeq <- function(modres, datatag){
+  tmp <- modres %>%
+    filter(pvalue < 0.05) %>%
+    mutate(enriched.in = paste(datatag, ifelse(log2FoldChange < 0, "EO", "LO"), sep = "_"),
+           ind = 1) %>%
+    select(Taxa, enriched.in, ind)
+    # pivot_wider(names_from = enriched.in, values_from = ind, values_fill = 0)
+  return(tmp)
+}
+
+prepIndicators16s <- function(){
+  tmp <- res.16s %>%
+    filter(p.value < 0.05) %>%
+    mutate(Taxa = microbe,
+           enriched.in = paste("16s", ifelse(estimate >= 0, "EO", "LO"), sep = "_"),
+           ind = 1) %>%
+    select(Taxa, enriched.in, ind)
+  return(tmp)
+}
+
+combineIndicators <- function(){
+  orien.in <- prepIndicatorsDESeq(res.ORIEN, "ORIEN")
+  TCGA.in <- prepIndicatorsDESeq(res.TCGA, "TCGA")
+  x16s.in <- prepIndicators16s()
+  
+  full.ind <- bind_rows(orien.in, TCGA.in, x16s.in) %>%
+    pivot_wider(names_from = enriched.in, values_from = ind, values_fill = 0)
+  return(full.ind)
+}
+```
+
+# Visualizations
+
+## Full species pools
+
+```{r}
+euler.coords <- euler(combinations = taxalist, shape = "ellipse")
+```
+
+```{r}
+pdf("../figures/euler_dataset-taxa-overlap.pdf")
+plot(euler.coords)
+dev.off()
+```
+
+
+
+## Significant taxa
+
+```{r}
+upsetdat <- combineIndicators() %>%
+  column_to_rownames(var = "Taxa")
+```
+
+```{r}
+png("../figures/upset_eo-lo-res.png")
+upset(upsetdat, nsets = 6)
+dev.off()
+```
+
+## Volcano plots
+
+```{r}
+volplot.tcga <- res.TCGA %>%
+  mutate(colgroup = ifelse(padj < 0.05, Taxa.Level, NA)) %>%
+  # drop_na(colgroup) %>%
+  mutate(collevel = fct_relevel(colgroup, c("kingdom", "phylum", "class", "order", "family", "genus")),
+         dataset = "TCGA")
+volplot.orien<- res.ORIEN %>%
+  mutate(colgroup = ifelse(padj < 0.05, Taxa.Level, NA)) %>%
+  # drop_na(colgroup) %>%
+  mutate(collevel = fct_relevel(colgroup, c("kingdom", "phylum", "class", "order", "family", "genus")),
+         dataset = "ORIEN")
+volplot.16s <- res.16s %>%
+  mutate(taxcode = str_sub(microbe,1,1),
+         Taxa = microbe,
+         Taxa.Level = case_when(taxcode == "k" ~ "kingdom",
+                                taxcode == "p" ~ "phylum",
+                                taxcode == "c" ~ "class",
+                                taxcode == "o" ~ "order",
+                                taxcode == "f" ~ "family",
+                                taxcode == "g" ~ "genus",
+                                taxcode == "s" ~ "species"),
+         colgroup = ifelse(padj < 0.05, Taxa.Level, NA)) %>%
+  # drop_na(colgroup) %>%
+  mutate(
+    # collevel = fct_relevel(colgroup, c("kingdom", "phylum", "class", "order", "family", "genus")),
+         dataset = "16S",
+         log2FoldChange = estimate)
+  
+volplot.in <- bind_rows(volplot.16s, volplot.orien, volplot.tcga)
+
+volplot.in %>%
+  mutate(dataset = fct_relevel(dataset, c("TCGA", "ORIEN", "16S"))) %>%
+  ggplot(aes(x = log2FoldChange, y = -log(padj), color = collevel)) +
+  facet_wrap(~dataset) +
+  geom_point(alpha = .8) +
+  # geom_text_repel(aes(label = ifelse(!is.na(colgroup), Taxa, NA))) +
+  geom_hline(yintercept = -log(.05), linetype = "dashed") +
+  geom_vline(xintercept = -.25, linetype = "dashed") +
+  geom_vline(xintercept = .25, linetype = "dashed") +
+  scale_color_brewer(palette = "Dark2", 
+                     na.value = "grey50", 
+                     name = "Taxonomy",
+                     direction = -1) +
+  theme_bw()
+
+ggsave(file = "../figures/volcano_facetted-datasets.png",
+       height = 2, width = 7)
+```
+
+## LDA plots
+
+```{r alternate LDA type vis}
+
+arrangeLDA <- function(ntax, plot.input, d){
+  res.lda <- plot.input %>%
+    arrange(padj) %>%
+    mutate(sigrank = row_number(),
+           taxname = gsub("^\\w__", "", Taxa))
+  
+  tmp <- res.lda %>%
+    filter(sigrank <= ntax) %>%
+    arrange(log2FoldChange) %>%
+    mutate(dataset = d)
+  tmp$tax.fact <- fct_relevel(tmp$taxname, tmp$taxname)
+  
+  return(tmp)
+  
+}
+
+lda.in <- bind_rows(arrangeLDA(10, volplot.16s, "16S"),
+                    arrangeLDA(10, volplot.orien, "ORIEN"),
+                    arrangeLDA(10, volplot.tcga, "TCGA"))
+
+lda.in %>%
+  mutate(dataset = fct_relevel(dataset, c("TCGA", "ORIEN", "16S"))) %>%
+  ggplot(aes(x = tax.fact, y = log2FoldChange)) +
+  facet_wrap(vars(dataset), scales = "free_y") +
+  geom_col(aes(fill = collevel), show.legend = FALSE) +
+  theme_bw() +
+  coord_flip() +
+  labs(x = "") +
+  scale_fill_brewer(palette = "Dark2",
+                    na.value = "grey50",
+                    direction = -1)
+
+ggsave("../figures/LDA_facetted-datasets.png", 
+       width = 7.2, 
+       height = 2)
+ggsave("../figures/LDA_facetted-datasets.svg", 
+       width = 7.2, 
+       height = 2)
+```

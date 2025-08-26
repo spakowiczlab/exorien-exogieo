@@ -1,0 +1,36 @@
+---
+title: "supplement figures"
+author: "Rebecca Hoyd"
+date: "10/22/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(ggrepel)
+```
+
+# Microbe-Immune cell concordance scatterplots
+
+```{r}
+load("../data/prepared-figure-data/scatterplot_corrs.rda")
+
+micim.full %>%
+    # filter(newlabs == "Neutrophils") %>%
+    ggplot(aes(x = ORIEN.est, y = TCGA.est, color = sigcode, label = mlab)) +
+    facet_grid(newlabs ~ onset) +
+    geom_point() +
+    geom_text_repel(show.legend = F, size = 2) +
+    geom_hline(yintercept = 0) +
+    geom_vline(xintercept = 0) +
+    scale_color_manual(values = c("darkgreen", "black", "orange", "blue"),
+                       name = "Significant in") +
+    labs(x = "ORIEN correlation", y = "TCGA correlation") +
+    theme_bw(base_size = 8)
+
+ggsave("../figures/scatterplot_all-mic-immune_sup.png", height = 21)
+```
+
+

@@ -56,7 +56,9 @@ tcga.plot <- tcga.clin %>%
   select(sample.expression, agestat) %>%
   # rename("sample" = "RNASeq") %>%
   left_join(tcga.immune) %>%
-  pivot_longer(-c("sample.expression", "agestat"), names_to = "ImmuneCell", values_to = "CellFrac")
+  pivot_longer(-c("sample.expression", "agestat"), names_to = "ImmuneCell", values_to = "CellFrac") %>%
+  left_join(lab.df)
+
 ```
 
 
@@ -84,7 +86,9 @@ orien.tres.df <-as.data.frame(cbind(ImmuneCell = cells,
 tcga.tres <- unlist(lapply(cells, function(x) test.cell.agediff(tcga.plot, x)))
 tcga.tres.df <- as.data.frame(cbind(ImmuneCell = cells,
                                     p.val = tcga.tres,
-                                    p.adj = p.adjust(tcga.tres)))
+                                    p.adj = p.adjust(tcga.tres))) %>%
+  left_join(lab.df)
+
 ```
 
 # Plots
@@ -111,7 +115,7 @@ ggsave("../figures/boxplot_ORIEN_immune-age.png", height = 10, width = 10)
 ```{r}
 tcga.plot %>%
   ggplot(aes(x = agestat, y = CellFrac)) +
-  facet_wrap(vars(ImmuneCell)) +
+  facet_wrap(vars(newlabs)) +
   geom_boxplot() +
   scale_x_discrete(breaks = c("EO", "LO"), labels = c("EO", "AO")) +
   labs(x = "Onset", y = "Cell Fraction") +

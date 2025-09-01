@@ -31,7 +31,7 @@ for(i in s4.datset){
     select(-dataset)
 }
 
-write_xlsx(s4.list, "../tables/s4_fig3-rnaseq-vol.xlsx")
+write_xlsx(s4.list, "../tables/s6_fig3-rnaseq-vol.xlsx")
 ```
 
 # S5
@@ -40,7 +40,7 @@ write_xlsx(s4.list, "../tables/s4_fig3-rnaseq-vol.xlsx")
 s5 <- vol.lda.dat$volplot %>%
   filter(dataset == "16S") %>%
   select(term, microbe, estimate, std.error, statistic, p.value, padj, l2fc)
-write_xlsx(s5, "../tables/s5_fig-16s-vol.xlsx")
+write_xlsx(s5, "../tables/s7_fig-16s-vol.xlsx")
 ```
 
 # S6
@@ -56,7 +56,7 @@ for(i in immcells){
     select(-mlab)
 }
 
-write_xlsx(micim.list, "../tables/s8_correlation-summary.xlsx")
+write_xlsx(micim.list, "../tables/s10_correlation-summary.xlsx")
 ```
 
 # Immune cell abundances
@@ -90,8 +90,8 @@ loadTCGAimmune <- function(){
 orien.immune <- loadORIENImmune()
 TCGA.immune <- loadTCGAimmune()
 
-write.csv(orien.immune, "../tables/s6_orien-immune-frac.csv", row.names = F)
-write.csv(TCGA.immune, "../tables/s7_tcga-immune-frac.csv", row.names = F)
+write.csv(orien.immune, "../tables/s8_orien-immune-frac.csv", row.names = F)
+write.csv(TCGA.immune, "../tables/s9_tcga-immune-frac.csv", row.names = F)
 ```
 
 

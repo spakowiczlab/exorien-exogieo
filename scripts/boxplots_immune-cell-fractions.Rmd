@@ -13,8 +13,8 @@ library(tidyverse)
 # Load data
 
 ```{r}
-orien.immune <- read.csv("../tables/s_orien-immune-frac.csv")
-tcga.immune <- read.csv("../tables/s_tcga-immune-frac.csv")
+orien.immune <- read.csv("../tables/s8_orien-immune-frac.csv")
+tcga.immune <- read.csv("../tables/s9_tcga-immune-frac.csv")
 
 orien.clin <- read.csv("../data/clinical_ORIEN_curated.csv")
 tcga.clin <- read.csv("../data/clinical_TCGA_curated.csv")
